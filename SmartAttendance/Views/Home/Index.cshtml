@@ -1,50 +1,197 @@
 ﻿@model List<AttendanceViewModel>
-
 @{
     ViewData["Title"] = "Show Attendance Table";
     var currentDate = DateTime.Now.ToString("yyyy-MM-dd");
-    int count = 1;
 }
 
-<div class="container">
-    <div class="info-container">
-        <div class="info">
-            <p><strong>Course:</strong> Mathematics</p>
-            <p><strong>Teacher:</strong> John Doe</p>
-            <p><strong>Date:</strong> @currentDate</p>
-        </div>
-        <button class="refresh-btn" onclick="loadData()">Refresh Data</button>
+<div class="info-container">
+    <div class="info">
+        <p><strong>Course:</strong> Mathematics</p>
+        <p><strong>Teacher:</strong> John Doe</p>
+        <p><strong>Date:</strong> @currentDate</p>
     </div>
-
-    <table class="attendance-table">
-        <thead>
-            <tr>
-                <th>ID</th>
-                <th>Full Name</th>
-                <th>Status</th>
-            </tr>
-        </thead>
-        <tbody id="attendanceTable">
-            @foreach (var student in Model)
-            {
-                <tr>
-                    <td>@(count++)</td>
-                    <td>@student.FullName</td>
-                    <td class="@(student.IsPresent ? "present" : "absent")">
-                        @(student.IsPresent ? "Present" : "Absent")
-                    </td>
-                </tr>
-            }
-        </tbody>
-    </table>
+    <div class="buttons-container">
+        <button class="refresh-btn" onclick="loadData()">Refresh Data</button>
+        <button id="exportExcelBtn" class="refresh-btn" onclick="exportToExcel()" disabled>Export to Excel</button>
+    </div>
 </div>
 
+<table class="attendance-table">
+    <thead>
+        <tr>
+            <th>No</th>
+            <th>Full Name</th>
+            <th>Status</th>
+            <th>Check Time</th>
+            <th>Comment</th>
+            <th>Actions</th>
+        </tr>
+    </thead>
+    <tbody id="attendanceTable">
+        @await Html.PartialAsync("_AttendanceTablePartial", Model)
+    </tbody>
+</table>
+
+
 <script>
+    let skipResfresh=false;
+    let intervalTime = 10000; 
+    let intervalId = null;
+    let dataReceived = false; 
+
     function loadData() {
-        fetch("")
+        if(!skipResfresh){
+            fetch("/GetData")
             .then(response => response.text())
-            .then(html => {
-                document.body.innerHTML = html;
+            .then(data => {
+                if (data.includes("No data available")) {
+                    document.getElementById("exportExcelBtn").disabled = true;
+                } else {
+                    $("#attendanceTable").html(data);
+                    document.getElementById("exportExcelBtn").disabled = false;
+
+                    if (!dataReceived) {
+                        dataReceived = true;
+                        updateInterval();
+                    }
+                }
+            })
+            .catch(error => console.error("Error:", error));
+        }
+    }
+
+    function updateInterval() {
+        if (intervalId) clearInterval(intervalId); 
+
+        intervalTime = dataReceived ? 30000 : 10000;
+        intervalId = setInterval(loadData, intervalTime);
+    }
+
+    updateInterval();
+
+    function onDataReceived() {
+        loadData(); 
+        if (!dataReceived) {
+            dataReceived = true;  
+            updateInterval(); 
+        }
+    }
+
+
+
+
+    function toggleEditMode(rowIndex, isEditMode) {
+        skipResfresh=true;
+        const row = document.getElementById(`row-${rowIndex}`);
+        const fullNameSpan = row.querySelector('.full-name');
+        const fullNameInput = row.querySelector('.full-name-input');
+        const statusSpan = row.querySelector('.status');
+        const statusDropdown = row.querySelector('.status-dropdown');
+        const commentSpan = row.querySelector('.comment');
+        const commentInput = row.querySelector('.comment-input');
+        const updateBtn = row.querySelector('.update-btn');
+        const saveBtn = row.querySelector('.save-btn');
+        const cancelBtn = row.querySelector('.cancel-btn');
+
+        if (isEditMode) {
+            fullNameSpan.style.display = 'none';
+            fullNameInput.style.display = 'inline';
+            fullNameInput.value = fullNameSpan.innerText;
+
+            statusSpan.style.display = 'none';
+            statusDropdown.style.display = 'inline';
+            statusDropdown.value = statusSpan.innerText.toLowerCase() === 'present' ? 'true' : 'false';
+
+            commentSpan.style.display = 'none';
+            commentInput.style.display = 'inline';
+            commentInput.value = commentSpan.innerText;
+
+            updateBtn.style.display = 'none';
+            saveBtn.style.display = 'inline';
+            cancelBtn.style.display = 'inline';
+        } else {
+            fullNameSpan.style.display = 'inline';
+            fullNameInput.style.display = 'none';
+
+            statusSpan.style.display = 'inline';
+            statusDropdown.style.display = 'none';
+
+            commentSpan.style.display = 'inline';
+            commentInput.style.display = 'none';
+
+            updateBtn.style.display = 'inline';
+            saveBtn.style.display = 'none';
+            cancelBtn.style.display = 'none';
+            skipResfresh=false;
+        }
+    }
+
+    function deleteStudent(rowIndex) {
+        skipResfresh=true;
+        if (confirm('Are you sure you want to delete this student?')) {
+            const row = document.getElementById(`row-${rowIndex}`);
+            row.remove();
+
+            fetch(`/DeleteStudent`, { 
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify((rowIndex-1)) 
+            }).then(response => {
+                if (response.ok) {
+                    loadData();
+                } else {
+                    alert('Failed to delete student');
+                }
+            }).catch(error => {
+                console.error('Error:', error);
+                alert('An error occurred while deleting the student');
             });
+        }
+         skipResfresh=false;
+    }
+
+    function saveChanges(rowIndex) {
+        skipResfresh=true;
+        const row = document.getElementById(`row-${rowIndex}`);
+        const fullNameInput = row.querySelector('.full-name-input');
+        const statusDropdown = row.querySelector('.status-dropdown');
+        const commentInput = row.querySelector('.comment-input');
+
+        row.querySelector('.full-name').innerText = fullNameInput.value;
+        row.querySelector('.status').innerText = statusDropdown.value === 'true' ? 'Present' : 'Absent';
+        row.querySelector('.comment').innerText = commentInput.value;
+
+        toggleEditMode(rowIndex, false);
+
+        const updatedData = {
+            RowIndex: (rowIndex-1), 
+            FullName: fullNameInput.value,
+            IsPresent: statusDropdown.value === 'true',
+            Comment: commentInput.value
+        };
+        fetch(`/UpdateStudent`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify(updatedData)
+        }).then(response => {
+            if (response.ok) {
+                loadData();
+            } else {
+                alert('Failed to save changes');
+            }
+        }).catch(error => {
+            console.error('Error:', error);
+            alert('An error occurred while saving changes');
+        });
+        skipResfresh=false;
+    }
+
+    function exportToExcel() {
+        // Excel indirme işlemi
+        window.location.href = '/ExportToExcel';  // Sunucudan Excel dosyasını al
     }
 </script>
